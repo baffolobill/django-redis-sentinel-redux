@@ -28,6 +28,21 @@ CACHES = {
             }
         }
     },
+    "without_sentinel": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://redis-master:6379/0",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+    },
+    "without_sentinel_with_prefix": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://redis-master:6379/0",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+        "KEY_PREFIX": "test-prefix",
+    },
     "doesnotexist": {
         "BACKEND": "django_redis_sentinel.cache.RedisSentinelCache",
         "LOCATION": [

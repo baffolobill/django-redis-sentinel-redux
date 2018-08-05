@@ -1,4 +1,4 @@
-FROM redis
+FROM redis:4-alpine
 
 MAINTAINER danigosa <danigosa@gmail.com>
 

@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import absolute_import, unicode_literals, print_function
-
 import base64
 import datetime
 import sys
@@ -9,34 +7,30 @@ import time
 import unittest
 from datetime import timedelta
 
-from django_redis_sentinel.client.sentinel import SentinelClient
 
 try:
     from unittest.mock import patch
 except ImportError:
     from mock import patch
 
+from django import VERSION
 from django.conf import settings
 from django.core.cache import cache
-from django import VERSION
 from django.test import TestCase
+
+import django_redis.cache
+from django_redis import get_redis_connection
+from django_redis.serializers import (
+    json as json_serializer, msgpack as msgpack_serializer
+)
 
 import django_redis_sentinel.cache
 from django_redis_sentinel import pool
+from django_redis_sentinel.client.sentinel import SentinelClient
 
-from django_redis.serializers import json as json_serializer
-from django_redis.serializers import msgpack as msgpack_serializer
 
 FAKE_REDIS = settings.CACHES["default"]["OPTIONS"].get("REDIS_CLIENT_CLASS") \
              == "fakeredis.FakeStrictRedis"
-
-if sys.version_info[0] < 3:
-    text_type = unicode
-    bytes_type = str
-else:
-    text_type = str
-    bytes_type = bytes
-    long = int
 
 
 def make_key(key, prefix, version):
@@ -100,7 +94,7 @@ class DjangoRedisCacheTestCustomKeyFunction(TestCase):
         settings.CACHES['default']['REVERSE_KEY_FUNCTION'] = self.old_rkf
 
 
-class DjangoRedisCacheTests(TestCase):
+class DjangoRedisWithoutSentinelTests(TestCase):
     def setUp(self):
         self.cache = cache
 
@@ -108,6 +102,63 @@ class DjangoRedisCacheTests(TestCase):
             self.cache.clear()
         except Exception:
             pass
+
+    def test_clear_with_cache_prefix(self):
+        """
+        Tests that cache.clear() does only delete keys which starts with the
+        correct prefix configured with KEY_PREFIX.
+
+        Changed:
+        According to the Django docs, cache.clear() removes everything. 
+        KEY_PREFIX just adds prefix. So why this keys must stay in cache?
+        """
+        cache_normal = caches['without_sentinel']
+        cache_with_prefix = caches['without_sentinel_with_prefix']
+        cache_normal.set('some_key', 'some_value')
+        cache_with_prefix.set('other_key', 'other_value')
+
+        cache_with_prefix.clear()
+
+        self.assertIsNone(cache_with_prefix.get('other_key'))
+
+        # self.assertEqual(cache_normal.get('some_key'), 'some_value')
+        self.assertIsNone(cache_normal.get('some_key'))
+    
+    def test_set(self):
+        """
+        Is it returns binary string?
+        """
+        cache_normal = caches['without_sentinel']
+        cache_normal.set('some_key', 'some_value')
+        self.assertEqual(cache_normal.get('some_key'), 'some_value')
+
+    def test_set_with_raw_client(self):
+        """
+        Is it returns binary string?
+        """
+        # cache_normal = caches['without_sentinel']
+        raw_client = get_redis_connection('without_sentinel')
+        raw_client.set('some_key', 'some_value')
+        self.assertEqual(raw_client.get('some_key'), b'some_value')
+
+
+class DjangoRedisCacheTests(TestCase):
+    def setUp(self):
+        self.cache = cache
+
+        try:
+            self.cache.clear()
+        except:
+            pass
+
+    def test_raw_client(self):
+        """
+        Ensure, raw client is still accessible.
+        """
+        # cache_normal = caches['without_sentinel']
+        raw_client = get_redis_connection('default')
+        raw_client.set('some_key', 'some_value')
+        self.assertEqual(raw_client.get('some_key'), b'some_value')
 
     def test_setnx(self):
         # we should ensure there is no test_key_nx in redis
@@ -159,20 +210,20 @@ class DjangoRedisCacheTests(TestCase):
         res = self.cache.get("test_key")
 
         type(res)
-        self.assertIsInstance(res, text_type)
+        self.assertIsInstance(res, str)
         self.assertEqual(res, "hello" * 1000)
 
         self.cache.set("test_key", "2")
         res = self.cache.get("test_key")
 
-        self.assertIsInstance(res, text_type)
+        self.assertIsInstance(res, str)
         self.assertEqual(res, "2")
 
     def test_save_unicode(self):
         self.cache.set("test_key", "heló")
         res = self.cache.get("test_key")
 
-        self.assertIsInstance(res, text_type)
+        self.assertIsInstance(res, str)
         self.assertEqual(res, "heló")
 
     def test_save_dict(self):
@@ -232,7 +283,7 @@ class DjangoRedisCacheTests(TestCase):
         self.assertEqual(res2, None)
 
         # nx=True should not overwrite expire of key already in db
-        self.cache.set("test_key", 222, 0)
+        self.cache.set("test_key", 222, None)
         self.cache.set("test_key", 222, -1, nx=True)
         res = self.cache.get("test_key", None)
         self.assertEqual(res, 222)
@@ -242,13 +293,13 @@ class DjangoRedisCacheTests(TestCase):
         res = self.cache.get("test_key", None)
         self.assertIsNone(res)
 
-        self.cache.set("test_key", 222, timeout=0)
+        self.cache.set("test_key", 222, timeout=None)
         self.cache.set("test_key", 222, timeout=-1)
         res = self.cache.get("test_key", None)
         self.assertIsNone(res)
 
         # nx=True should not overwrite expire of key already in db
-        self.cache.set("test_key", 222, timeout=0)
+        self.cache.set("test_key", 222, timeout=None)
         self.cache.set("test_key", 222, timeout=-1, nx=True)
         res = self.cache.get("test_key", None)
         self.assertEqual(res, 222)
@@ -343,7 +394,7 @@ class DjangoRedisCacheTests(TestCase):
             res = self.cache.get("num")
             self.assertEqual(res, 9223372036854775810)
 
-            self.cache.set("num", long(3))
+            self.cache.set("num", int(3))
 
             self.cache.incr("num", 2)
             res = self.cache.get("num")
@@ -376,8 +427,6 @@ class DjangoRedisCacheTests(TestCase):
         self.assertEqual(res, False)
 
     def test_decr(self):
-        if FAKE_REDIS:
-            raise unittest.SkipTest("FakeRedis doesn't support eval")
         try:
             self.cache.set("num", 20)
 
@@ -389,11 +438,11 @@ class DjangoRedisCacheTests(TestCase):
             res = self.cache.get("num")
             self.assertEqual(res, -1)
 
-            self.cache.decr("num", long(2))
+            self.cache.decr("num", int(2))
             res = self.cache.get("num")
             self.assertEqual(res, -3)
 
-            self.cache.set("num", long(20))
+            self.cache.set("num", int(20))
 
             self.cache.decr("num")
             res = self.cache.get("num")
@@ -556,8 +605,7 @@ class DjangoRedisCacheTests(TestCase):
             pass
 
     def test_sentinel_switching(self):
-        if not isinstance(self.cache.client,
-                          SentinelClient):
+        if not isinstance(self.cache.client, SentinelClient):
             self.skipTest("Not Sentinel clients use default master-slave setup")
         try:
             cache = caches["sample"]
@@ -566,7 +614,7 @@ class DjangoRedisCacheTests(TestCase):
             slave = client.get_client(write=False)
 
             master.set("Foo", "Bar")
-            self.assertEqual(slave.get("Foo"), "Bar")
+            self.assertEqual(slave.get("Foo"), b"Bar")
             self.assertEqual(master.info()['role'], "master")
             self.assertEqual(slave.info()['role'], "slave")
         except NotImplementedError:
@@ -576,6 +624,10 @@ class DjangoRedisCacheTests(TestCase):
         """
         Tests that cache.clear() does only delete keys which starts with the
         correct prefix configured with KEY_PREFIX.
+
+        Changed:
+        According to the Django docs, cache.clear() removes everything. 
+        KEY_PREFIX just adds prefix. So why this keys must stay in cache?
         """
         cache_normal = caches['sample']
         cache_with_prefix = caches['with_prefix']
@@ -585,19 +637,19 @@ class DjangoRedisCacheTests(TestCase):
         cache_with_prefix.clear()
 
         self.assertIsNone(cache_with_prefix.get('other_key'))
-        self.assertEqual(cache_normal.get('some_key'), 'some_value')
+        
+        # Changed:
+        # self.assertEqual(cache_normal.get('some_key'), 'some_value')
+        self.assertIsNone(cache_normal.get('some_key'))
 
     def test_zlib_compressor(self):
         pass
 
 
-import django_redis_sentinel.cache
-
-
 class DjangoOmitExceptionsTests(TestCase):
     def setUp(self):
-        self._orig_setting = django_redis_sentinel.cache.DJANGO_REDIS_IGNORE_EXCEPTIONS
-        django_redis_sentinel.cache.DJANGO_REDIS_IGNORE_EXCEPTIONS = True
+        self._orig_setting = django_redis.cache.DJANGO_REDIS_IGNORE_EXCEPTIONS
+        django_redis.cache.DJANGO_REDIS_IGNORE_EXCEPTIONS = True
         self.cache = caches["doesnotexist"]
         self.cache._orig_ignore_exceptions = self.cache._ignore_exceptions
         self.cache._ignore_exceptions = True
@@ -791,16 +843,15 @@ class SessionTestsMixin(object):
             # session key; make sure that entry is manually deleted
             session.delete('1')
 
-    if VERSION[:2] != (1, 8):
-        def test_session_key_empty_string_invalid(self):
-            """Falsey values (Such as an empty string) are rejected."""
-            self.session._session_key = ''
-            self.assertIsNone(self.session.session_key)
+    def test_session_key_empty_string_invalid(self):
+        """Falsey values (Such as an empty string) are rejected."""
+        self.session._session_key = ''
+        self.assertIsNone(self.session.session_key)
 
-        def test_session_key_too_short_invalid(self):
-            """Strings shorter than 8 characters are rejected."""
-            self.session._session_key = '1234567'
-            self.assertIsNone(self.session.session_key)
+    def test_session_key_too_short_invalid(self):
+        """Strings shorter than 8 characters are rejected."""
+        self.session._session_key = '1234567'
+        self.assertIsNone(self.session.session_key)
 
     def test_session_key_valid_string_saved(self):
         """Strings of length 8 and up are accepted and stored."""
