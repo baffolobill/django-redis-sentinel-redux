@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
-
-from __future__ import absolute_import, unicode_literals
-
 import socket
 
-from django.core.cache.backends.base import get_key_func
+from django.core.cache.backends.base import DEFAULT_TIMEOUT, get_key_func
 from django.core.exceptions import ImproperlyConfigured
+from redis.exceptions import ConnectionError, ResponseError, TimeoutError
+from django_redis.exceptions import ConnectionInterrupted
 from django_redis.client.default import DefaultClient
 from django_redis.util import load_class
-from redis.exceptions import ConnectionError
-
 from django_redis_sentinel import pool
 
-try:
-    from redis.exceptions import TimeoutError, ResponseError
-
-    _main_exceptions = (TimeoutError, ResponseError, ConnectionError, socket.timeout)
-except ImportError:
-    _main_exceptions = (ConnectionError, socket.timeout)
+_main_exceptions = (TimeoutError, ResponseError, ConnectionError, socket.timeout)
 
 
 class SentinelClient(DefaultClient):
@@ -35,8 +27,6 @@ class SentinelClient(DefaultClient):
     """
 
     def __init__(self, server, params, backend):
-        super(SentinelClient, self).__init__(server, params, backend)
-
         self._backend = backend
         self._server = server
         self._params = params
@@ -51,6 +41,8 @@ class SentinelClient(DefaultClient):
             self._server = self._server.split(",")
 
         self._options = params.get("OPTIONS", {})
+        # In Redis Sentinel (not Redis Cluster) all slaves in read-only mode
+        self._slave_read_only = True
 
         serializer_path = self._options.get("SERIALIZER", "django_redis.serializers.pickle.PickleSerializer")
         serializer_cls = load_class(serializer_path)
@@ -93,3 +85,54 @@ class SentinelClient(DefaultClient):
             return self.connection_factory.connect_master()
         else:
             return self.connection_factory.connect_slave(force_slave)
+
+    def set(self, key, value, timeout=DEFAULT_TIMEOUT, version=None, client=None, nx=False, xx=False):
+        """
+        Persist a value to the cache, and set an optional expiration time.
+        Also supports optional nx parameter. If set to True - will use redis setnx instead of set.
+        """
+        nkey = self.make_key(key, version=version)
+        nvalue = self.encode(value)
+
+        if timeout == DEFAULT_TIMEOUT:
+            timeout = self._backend.default_timeout
+
+        # No need to limit this loop, because `redis.sentinel.MasterNotFoundError`
+        # will be raised if `redis.sentinel.Sentinel` couldn't find a master
+        # (in Redis Sentinel setup only master is used for writes).
+        # But, it still possible, that Sentinels is accessible, but Redis itself
+        # is not. In this case this loop become infinite.
+        # If you wanna limit num tries, set `REDIS_SERVER_CONNECT_MAX_TRIES` in
+        # `OPTIONS` section to value greater then 0.
+        tries = self._options.get('REDIS_SERVER_CONNECT_MAX_TRIES', -1)
+        while tries:
+            try:
+                if not client:
+                    client = self.get_client(write=True)
+
+                if timeout is not None:
+                    # Convert to milliseconds
+                    timeout = int(timeout * 1000)
+
+                    if timeout <= 0:
+                        if nx:
+                            # Using negative timeouts when nx is True should
+                            # not expire (in our case delete) the value if it exists.
+                            # Obviously expire not existent value is noop.
+                            return not self.has_key(key, version=version, client=client)
+                        else:
+                            # redis doesn't support negative timeouts in ex flags
+                            # so it seems that it's better to just delete the key
+                            # than to set it and than expire in a pipeline
+                            return self.delete(key, client=client, version=version)
+
+                return client.set(nkey, nvalue, nx=nx, px=timeout, xx=xx)
+            except _main_exceptions as e:
+                tries -= 1
+                continue
+
+    def close(self, **kwargs):
+        """
+        Nothing to close, because each method calls `get_client()`, which
+        creates new connection.
+        """
