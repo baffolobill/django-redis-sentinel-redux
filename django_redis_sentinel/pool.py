@@ -74,7 +74,7 @@ class SentinelConnectionFactory(ConnectionFactory):
         :raises MasterNotFoundError: if no master available
         then raises this
         """
-        return self._sentinel.master_for(self.service_name, **self.redis_client_cls_kwargs)
+        return self._sentinel.master_for(self.service_name, redis_class=self.redis_client_cls, **self.redis_client_cls_kwargs)
 
     def connect_slave(self, force_slave=False):
         """
@@ -84,7 +84,7 @@ class SentinelConnectionFactory(ConnectionFactory):
         then raises this
         """
         if self.has_slaves() or force_slave:
-            return self._sentinel.slave_for(self.service_name, **self.redis_client_cls_kwargs)
+            return self._sentinel.slave_for(self.service_name, redis_class=self.redis_client_cls, **self.redis_client_cls_kwargs)
         else:
             # If the cluster had no slaves when creating the pool
             #  then no need for callbacks and unnecessary discoveries, fall back
