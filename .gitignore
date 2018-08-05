@@ -22,3 +22,4 @@ dist*
 .tox
 dump.rdb
 .idea
+.sonarlint
