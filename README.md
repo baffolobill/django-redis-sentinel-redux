@@ -1,6 +1,11 @@
-# Django-Redis Client that supports Sentinel Cluster HA
+# Changed in this fork:
 
-![CI Status](https://travis-ci.org/danigosa/django-redis-sentinel-redux.svg?branch=master) [![PyPI version](https://badge.fury.io/py/django-redis-sentinel-redux.svg)](https://badge.fury.io/py/django-redis-sentinel-redux)
+* fixed tests (but didn't verify them)
+* added compatibility with django-redis==4.9.0 and Django 2.0
+* added option REDIS_SERVER_CONNECT_MAX_TRIES (details in the code)
+
+
+# Django-Redis Client that supports Sentinel Cluster HA
 
 Extension for the package django-redis(<https://github.com/niwinz/django-redis>) to fully support Redis Sentinel Clusters. This enables having django-redis as an HA Store or Cache in production environments that require HA. For more information about Redis Sentinel HA capabilities visit: http://redis.io/topics/sentinel
 
@@ -92,7 +97,6 @@ From now on you can use django-redis
 
 ## Running Tests
     
-    $ docker-compose build
     $ docker-compose up -d
     $ ./run_docker_tests.sh
 
@@ -102,7 +106,6 @@ Running tests after a failover:
 
     ----------------------
     ## In a first terminal
-    $ docker-compose build
     $ docker-compose up -d
     $ ./bash-container
     root@7809ac6b537b:/django-redis-sentinel# cd tests/
@@ -115,7 +118,6 @@ Running tests after a failover:
     
 Running Redis Sentinel Cluster low-level testing:
 
-    $ docker-compose build
     $ docker-compose up -d
     $ cd sentinel/
     $ ./test_sentinel.sh
