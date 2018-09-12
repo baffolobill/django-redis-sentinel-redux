@@ -42,9 +42,10 @@ class SentinelClient(DefaultClient):
         self._options = params.get("OPTIONS", {})
 
         if self._options.get('USE_CONSUL', False) and consulate is not None:
+            sentinel_port = self._options.get('SENTINEL_PORT', '26379')
             consul = consulate.Consul(host=self._options.get('CONSUL_IP_ADDR', 'localhost'))
             self._server = [
-                node['Address'] for node in consul.catalog.nodes() 
+                (node['Address'], sentinel_port) for node in consul.catalog.nodes() 
                 if node['Meta'].get('consul_role') == 'server'
             ]
         if not self._server:
