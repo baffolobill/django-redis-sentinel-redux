@@ -19,6 +19,7 @@ setup(
     description=description.strip(),
     install_requires=[
         "django-redis==4.9.0",
+        "git+https://github.com/gmr/consulate.git@e8acd07",
     ],
     zip_safe=False,
     classifiers=[

@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 import socket
 
+try:
+    import consulate
+except ImportError:
+    consulate = None
+
 from django.core.cache.backends.base import DEFAULT_TIMEOUT, get_key_func
 from django.core.exceptions import ImproperlyConfigured
 from redis.exceptions import ConnectionError, ResponseError, TimeoutError
@@ -34,13 +39,20 @@ class SentinelClient(DefaultClient):
         self.reverse_key = get_key_func(params.get("REVERSE_KEY_FUNCTION") or
                                         "django_redis.util.default_reverse_key")
 
+        self._options = params.get("OPTIONS", {})
+
+        if self._options.get('USE_CONSUL', False) and consulate is not None:
+            consul = consulate.Consul(host=self._options.get('CONSUL_IP_ADDR', 'localhost'))
+            self._server = [
+                node['Address'] for node in consul.catalog.nodes() 
+                if node['Meta'].get('consul_role') == 'server'
+            ]
         if not self._server:
             raise ImproperlyConfigured("Missing connections string")
 
         if not isinstance(self._server, (list, tuple, set)):
             self._server = self._server.split(",")
 
-        self._options = params.get("OPTIONS", {})
         # In Redis Sentinel (not Redis Cluster) all slaves in read-only mode
         self._slave_read_only = True
 
